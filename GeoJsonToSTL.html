@@ -1,0 +1,599 @@
+<html>
+<body>
+
+<h1>Geojson to stl</h1>
+
+<p>Please select a GeoJson file from your pc, then select the value you would like to use for height and what to group
+   the files by (group shall add the files into folders with the group name) then click Generate STL.</p>
+<p>Please note this is a very early version, there is no loading spinner to signify it is working, it takes a few seconds
+   to start downloading when I run it, no error messages are displayed either. Also you will be downloading a zip file I
+   found that chrome will say it is harmful, you can just click the arrow and tell chrome to keep the file.</p>
+<p>Other than the initial loading of this page and 2 javascript packages
+    <a href="https://www.npmjs.com/package/jszip">jszip</a> and
+    <a href="https://www.npmjs.com/package/file-saver">FileSaver</a>, no network is required to convert the STL files and
+   I don't send back any data to the server. It is however hosted on a Square space site which may make some network request.</p>
+<p>I do plan to improve this at some point with a much more friendlier interface, so keep an eye on this page if the
+   converter failed for you as I plan to improve it, you can let me know something went wrong on the contact me page,
+or on github at <a href="https://github.com/seam345/GeoJsonToSTL">GeoJsonToSTL</a>, feel free to submit issues or pull requests.</p>
+
+<input
+  type="file"
+  id="files"
+  name="files[]"
+/>
+<br/>
+<br/>
+<br/>
+
+<input
+  type="range"
+  min="0"
+  max="20"
+  value="0"
+  id="toleranceRange"
+/>
+<p>Tolerance: <span id="toleranceSpan"></span></p>
+
+<br/>
+
+
+<!--<button onclick="test()">Test</button>-->
+
+<p>Number of features in GeoJson: <span id="featureCount">N/A</span></p>
+<p id="list"></p>
+<p id="listGroup"></p>
+
+<button onclick="myFunction()">Generate STL</button>
+<script src="https://unpkg.com/jszip@3.2.1/dist/jszip.min.js"></script>
+<script src="https://unpkg.com/file-saver@2.0.2/dist/FileSaver.min.js"></script>
+
+<script>
+  let geoJSON   = null;
+  let heightkey = null;
+  let groupKey  = null;
+
+  let toleranceSlider = document.getElementById('toleranceRange');
+  console.log(toleranceSlider);
+  let toleranceSpanOutput       = document.getElementById('toleranceSpan');
+  toleranceSpanOutput.innerHTML = toleranceSlider.value / 10;
+
+  toleranceSlider.oninput = function ()
+  {
+    toleranceSpanOutput.innerHTML = this.value / 10;
+  };
+
+  function radians_to_degrees(radians)
+  {
+    let pi = Math.PI;
+    return radians * ( 180 / pi );
+  }
+
+  function degrees_to_radians(degrees)
+  {
+    return degrees * ( Math.PI / 180 );
+  }
+
+  function handleFileSelect(evt)
+  {
+    let files = evt.target.files; // FileList object
+    console.log(files);
+
+    // files is a FileList of File objects. List some properties.
+    if ( files.length === 1 )
+    {
+      const reader = new FileReader();
+
+
+      reader.readAsText(files[0]); // read file as data url
+
+      reader.onload = (FileData) =>
+      {
+        // const tempObj: any = {};
+        // const target: any  = FileData.target; // <-- This (any) will tell compiler to shut up!
+        // tempObj.url        = target.result;
+        // tempObj.name       = event.target.files[i].name;
+
+        // todo write a verify method to let user know if its an incorrect file
+        // console.log(FileData.target.result);
+        try
+        {
+          geoJSON = JSON.parse(FileData.target.result);
+
+        } catch (error)
+        {
+          let message = error;
+          message += '\n\nThe file that has been selected may have been incorrectly formatted or the wrong file type.';
+          window.alert(message)
+        }
+
+        // this.fileList.push(tempObj);
+
+
+        // <input type="radio" name="gender" value="male"> Male<br>
+        // <input type="radio" name="gender" value="female"> Female<br>
+        // <input type="radio" name="gender" value="other"> Other
+        // console.log(geoJSON);
+        // console.log(geoJSON['features']);
+
+
+        let output = 'Please select a variable to use an height below: <br/>';
+        for (let key in  geoJSON['features'][0]['properties'])
+        {
+          // skip loop if the property is from prototype
+          if ( !geoJSON['features'][0]['properties'].hasOwnProperty(key) ) continue;
+
+          output += '<input type="radio" name="height" value="' + key + '"> ' + key + '<br/>';
+
+        }
+        // console.log(output);
+        document.getElementById('list').innerHTML         = output;
+        document.getElementById('featureCount').innerHTML = geoJSON['features'].length;
+        let heightRadio                                   = document.getElementsByName('height');
+        for (let i = 0; i < heightRadio.length; i++)
+        {
+          heightRadio[i].addEventListener('change', handleHeightSelect, false)
+        }
+
+
+        let output2 = 'Please select a variable to group object by below: <br/>';
+        for (let key in  geoJSON['features'][0]['properties'])
+        {
+          // skip loop if the property is from prototype
+          if ( !geoJSON['features'][0]['properties'].hasOwnProperty(key) ) continue;
+
+          output2 += '<input type="radio" name="group" value="' + key + '"> ' + key + '<br/>';
+
+        }
+        // console.log(output);
+        document.getElementById('listGroup').innerHTML = output2;
+        let groupRadio                                 = document.getElementsByName('group');
+        for (let i = 0; i < heightRadio.length; i++)
+        {
+          groupRadio[i].addEventListener('change', handleGroupSelect, false)
+        }
+
+      };
+    }
+  }
+
+  function handleGroupSelect()
+  {
+    groupKey = this.value;
+  }
+
+  function handleHeightSelect()
+  {
+    // console.log(this.value);
+    heightkey = this.value;
+  }
+
+  document.getElementById('files').addEventListener('change', handleFileSelect, false);
+
+  function myFunction()
+  {
+    let stlFolders = {};
+
+
+    // Create a new key for every unique folder I am going to make
+    for (let i = 0; i < geoJSON['features'].length; i++)
+    {
+      if ( !( geoJSON['features'][i]['properties'][groupKey] in stlFolders ) )
+      // if ( !( geoJSON['features'][j]['properties']['winning_party'] in stlFolders ) )
+      {
+        stlFolders[geoJSON['features'][i]['properties'][groupKey]] = [];
+      }
+    }
+
+
+    let stl = [];
+    for (let j = 0; j < geoJSON['features'].length; j++)
+    {
+      console.log('Start shape: %d', j);
+      let newStl        = 'solid shape' + j + '\n';
+      // let xShapeOrigin  = ( j % 10 ) * 50;
+      let xShapeOrigin  = 0;
+      // let yShapeOrigin  = Math.floor(j / 10) * 50;
+      let yShapeOrigin  = 0;
+      let previousPoint = [xShapeOrigin, yShapeOrigin];
+      let height        = geoJSON['features'][j]['properties'][heightkey];
+      if ( height == null || height < 1 )
+      {
+        height = 2;
+      } else
+      {
+        height = height / 200;
+      }
+      // console.log(heightkey);
+      let relativePoints = [];
+      relativePoints.push(previousPoint);
+
+      let coordinatesFirst1 = geoJSON['features'][j]['geometry']['coordinates'][0][0];
+      // console.log(coordinates1);
+      let firstLat1         = coordinatesFirst1[1];
+      let firstLon1         = coordinatesFirst1[0];
+
+      const originOffset = getOriginOffset(firstLat1, firstLon1);
+
+      for (let i = 1; i < geoJSON['features'][j]['geometry']['coordinates'][0].length; i++)
+      {
+        let coordinates = geoJSON['features'][j]['geometry']['coordinates'][0][i];
+        let lat         = coordinates[1];
+        let lon         = coordinates[0];
+
+        let result = getStlFromPoints(lat, lon, height, previousPoint, originOffset);
+
+        // newStl += result[0];
+        previousPoint = result[1];
+        relativePoints.push(previousPoint);
+      }
+
+
+      relativePoints.splice(relativePoints.length - 1, 1);  // last and first point are the same so remove one
+
+      relativePoints = shrinkShape(relativePoints, toleranceSpanOutput.innerText);
+      newStl += pointsToSTLPerimeter(relativePoints, height);
+
+      newStl += earClipping(relativePoints, height);
+      newStl += 'endsolid shape' + j + '\n';
+      // console.log(newStl);
+      stl.push(newStl);
+
+      stlFolders[geoJSON['features'][j]['properties'][groupKey]].push(newStl);
+
+
+    }
+
+    const zip = new JSZip();
+
+    for (let folderName in stlFolders)
+    {
+      const zippedFolder = zip.folder(folderName);
+      for (let i = 0; i < stlFolders[folderName].length; i++)
+      {
+        zippedFolder.file(i + '.stl', stlFolders[folderName][i]);
+      }
+    }
+
+
+    zip.generateAsync({type: "blob"})
+        .then(function (blob)
+        {
+          saveAs(blob, "shapes.zip");
+        });
+
+  }
+
+
+  function pointsToSTLPerimeter(pointArray, height)
+  {
+
+    let stl = '';
+    for (let i = 0; i < pointArray.length; i++)
+    {
+      let y = pointArray[( pointArray.length + i + 1 ) % pointArray.length][1] - pointArray[( pointArray.length + i + 0 ) % pointArray.length][1];
+      let x = pointArray[( pointArray.length + i + 1 ) % pointArray.length][0] - pointArray[( pointArray.length + i + 0 ) % pointArray.length][0];
+
+      let normalVector = [-y, x, 0];
+      let vertex1      = [pointArray[( pointArray.length + i + 0 ) % pointArray.length][0], pointArray[( pointArray.length + i + 0 ) % pointArray.length][1], 0];
+      let vertex2      = [pointArray[( pointArray.length + i + 0 ) % pointArray.length][0], pointArray[( pointArray.length + i + 0 ) % pointArray.length][1], height];
+      let vertex3      = [pointArray[( pointArray.length + i + 1 ) % pointArray.length][0], pointArray[( pointArray.length + i + 1 ) % pointArray.length][1], 0];
+      let vertex4      = [pointArray[( pointArray.length + i + 1 ) % pointArray.length][0], pointArray[( pointArray.length + i + 1 ) % pointArray.length][1], height];
+
+      stl += createStlTriangle(normalVector, vertex1, vertex2, vertex3);
+      stl += createStlTriangle(normalVector, vertex2, vertex3, vertex4);
+    }
+    return stl;
+  }
+
+  function shrinkShape(pointArray, tolerance, debug = false)
+  {
+    if ( debug )
+    {
+      console.log('called shrinkShape(%s, %s)', JSON.stringify(pointArray), JSON.stringify(tolerance));
+    }
+    let newPointArray = [];
+    for (let i = 0; i < pointArray.length; i++)
+    {
+
+      let vertex1 = pointArray[( pointArray.length + i - 1 ) % pointArray.length];
+      let vertex2 = pointArray[( pointArray.length + i + 0 ) % pointArray.length]; // modulo to wrap around when I hit the end of the array I need to wrap around otherwise i miss out 2 potential triangles
+      let vertex3 = pointArray[( pointArray.length + i + 1 ) % pointArray.length];
+
+      let vector1       = [vertex1[0] - vertex2[0], vertex1[1] - vertex2[1]];
+      let vector1Length = Math.sqrt(( vector1[0] * vector1[0] ) + ( vector1[1] * vector1[1] ));
+      let vector1Normal = [vector1[0] / vector1Length, vector1[1] / vector1Length];
+
+      let vector2       = [vertex3[0] - vertex2[0], vertex3[1] - vertex2[1]];
+      let vector2Length = Math.sqrt(( vector2[0] * vector2[0] ) + ( vector2[1] * vector2[1] ));
+      let vector2Normal = [vector2[0] / vector2Length, vector2[1] / vector2Length];
+
+      let direction           = [vector1Normal[0] + vector2Normal[0], vector1Normal[1] + vector2Normal[1]];
+      let directionLength     = Math.sqrt(( direction[0] * direction[0] ) + ( direction[1] * direction[1] ));
+      let directionNormalised = [direction[0] / directionLength, direction[1] / directionLength];
+
+
+      let newX = vertex2[0];
+      let newY = vertex2[1];
+      if ( isConcave(vertex1, vertex2, vertex3) )
+      {
+
+        newX += ( tolerance * direction[0] );
+        newY += ( tolerance * direction[1] );
+      } else
+      {
+        newX -= ( tolerance * direction[0] );
+        newY -= ( tolerance * direction[1] );
+      }
+
+      if ( debug )
+      {
+        console.log('oldXY [%f, %f] new XY [%f, %f]', pointArray[i][0], pointArray[i][1], newX, newY);
+        console.log('direction %s vector1 [%f, %f], vector2 [%f, %f]', JSON.stringify(direction), vector1[0], vector1[1], vector2[0], vector2[1]);
+        console.log('direction length %s directionNormalised %s', JSON.stringify(directionLength), JSON.stringify(directionNormalised), vector1[1], vector2[0], vector2[1]);
+        console.log('isConcave %s', JSON.stringify(isConcave(vertex1, vertex2, vertex3)));
+        console.log(' ');
+        console.log(' ');
+      }
+      newPointArray.push([newX, newY])
+    }
+    return newPointArray;
+  }
+
+  function getOriginOffset(lat, long)
+  {
+    return [long, Math.tan(lat)]
+  }
+
+  function getStlFromPoints(lat, lon, height, previousPoint, originOffset)
+  {
+
+    let stl = '';
+
+    let x            = lon - originOffset[0];
+    let y            = Math.tan(lat) - originOffset[1];
+    let Rx           = 0.001513292705; // took mid x of the manchester map and moved 1 degree and divided it by the miles (i calculated them on this website https://www.movable-type.co.uk/scripts/latlong.html)  to get this (additionally divided by 10 to get mm instead of cm for km)
+    let Ry           = 0.000899280575; // y never changes so it was 1 degree by 111.2 regardless of position (additionally divided by 10 to get mm instead of cm for km)
+    let currentPoint = [x / Rx, y / Ry];
+
+
+    let normalVector = [-y, x, 0];
+    let vertex1      = [previousPoint[0], previousPoint[1], 0];
+    let vertex2      = [previousPoint[0], previousPoint[1], height];
+    let vertex3      = [currentPoint[0], currentPoint[1], 0];
+    let vertex4      = [currentPoint[0], currentPoint[1], height];
+
+
+    stl += createStlTriangle(normalVector, vertex1, vertex2, vertex3);
+    stl += createStlTriangle(normalVector, vertex2, vertex3, vertex4);
+
+
+    return [stl, currentPoint];
+  }
+
+  function createStlTriangle(normal, vertex1, vertex2, vertex3)
+  {
+    let stl = '';
+    stl += 'facet normal ' + normal[0] + ' ' + normal[1] + ' ' + normal[2] + '\n';
+    stl += 'outer loop \n';
+    stl += 'vertex ' + vertex1[0] + ' ' + vertex1[1] + ' ' + vertex1[2] + '\n';
+    stl += 'vertex ' + vertex2[0] + ' ' + vertex2[1] + ' ' + vertex2[2] + '\n';
+    stl += 'vertex ' + vertex3[0] + ' ' + vertex3[1] + ' ' + vertex3[2] + '\n';
+    stl += 'endloop \n';
+    stl += 'endfacet \n';
+    return stl;
+  }
+
+
+  function earClipping(pointArray, height, debugLevel = 0)
+  {
+    let stl            = '';
+    const normalTop    = [0, 0, 1];
+    const normalBottom = [0, 0, -1];
+
+    while (pointArray.length > 2)
+        // for (let k = 0; k < 6; k++)
+    {
+      let smallestTriangle = null;
+      let smallAngle       = 180;
+
+      for (let i = 0; i < pointArray.length; i++)
+      {
+        let vertex1 = pointArray[i];
+        let vertex2 = pointArray[( i + 1 ) % pointArray.length]; // modulo to wrap around when I hit the end of the array I need to wrap around otherwise i miss out 2 potential triangles
+        let vertex3 = pointArray[( i + 2 ) % pointArray.length];
+        if ( debugLevel > 2 )
+        {
+          console.log('i : %d', i);
+          console.log('i + 2 : %d', ( i + 2 ) % pointArray.length);
+        }
+
+        if ( isConcave(vertex1, vertex2, vertex3) )
+        {
+          let currentAngle = angleDegrees(vertex1, vertex2, vertex3);
+          if ( currentAngle < smallAngle )
+          {
+            smallAngle       = currentAngle;
+            smallestTriangle = i;
+          }
+        }
+      }
+      if ( debugLevel > 0 )
+      {
+        console.log(smallAngle);
+        console.log(smallestTriangle);
+        console.log(JSON.stringify(pointArray));
+
+      }
+      if ( smallestTriangle == null )
+      {
+        break;
+      }
+      let vertex1Top = [pointArray[( smallestTriangle + 2 ) % pointArray.length][0], pointArray[( smallestTriangle + 2 ) % pointArray.length][1], height];
+      let vertex2Top = [pointArray[( smallestTriangle + 1 ) % pointArray.length][0], pointArray[( smallestTriangle + 1 ) % pointArray.length][1], height];
+      let vertex3Top = [pointArray[smallestTriangle][0], pointArray[smallestTriangle][1], height];
+
+      let vertex1Bottom = [pointArray[( smallestTriangle + 2 ) % pointArray.length][0], pointArray[( smallestTriangle + 2 ) % pointArray.length][1], 0];
+      let vertex2Bottom = [pointArray[( smallestTriangle + 1 ) % pointArray.length][0], pointArray[( smallestTriangle + 1 ) % pointArray.length][1], 0];
+      let vertex3Bottom = [pointArray[smallestTriangle][0], pointArray[smallestTriangle][1], 0];
+
+      stl += createStlTriangle(normalTop, vertex1Top, vertex2Top, vertex3Top);
+      stl += createStlTriangle(normalBottom, vertex1Bottom, vertex2Bottom, vertex3Bottom);
+
+      pointArray.splice(( smallestTriangle + 1 ) % pointArray.length, 1); // remove item from list for next iteration
+    }
+    // console.log(pointArray);
+    return stl;
+  }
+
+  function isConcave(point2D1, point2D2, point2D3, debug = false)
+  { // https://stackoverflow.com/questions/7785601/detecting-if-angle-is-more-than-180-degrees
+    if ( debug )
+    {
+      console.log('called isConvex( %s, %s, %s)', JSON.stringify(point2D1), JSON.stringify(point2D2), JSON.stringify(point2D3));
+    }
+    let vector1 = [point2D1[0] - point2D2[0], point2D1[1] - point2D2[1]];
+    let vector2 = [point2D3[0] - point2D2[0], point2D3[1] - point2D2[1]];
+
+    if ( debug )
+    {
+      console.log('calculated zcross to be %s', JSON.stringify(( ( vector1[0] * vector2[1] ) - ( vector2[0] * vector1[1] ) )));
+
+    }
+    // x1y2-x2y1
+    return ( ( vector1[0] * vector2[1] ) - ( vector2[0] * vector1[1] ) ) > 0
+  }
+
+  function angleDegrees(point2D1, point2D2, point2D3, debug = false)
+  {
+    if ( debug )
+    {
+      console.log('called isConvex( %s, %s, %s)', JSON.stringify(point2D1), JSON.stringify(point2D2), JSON.stringify(point2D3));
+    }
+    let vector1       = [point2D1[0] - point2D2[0], point2D1[1] - point2D2[1]];
+    let vector2       = [point2D3[0] - point2D2[0], point2D3[1] - point2D2[1]];
+    let vector1Length = Math.sqrt(vector1[0] * vector1[0] + vector1[1] * vector1[1]);
+    let vector2Length = Math.sqrt(vector2[0] * vector2[0] + vector2[1] * vector2[1]);
+
+    let dotOfv1v2 = ( vector1[0] * vector2[0] ) + ( vector1[1] * vector2[1] );
+    let angle     = Math.acos(dotOfv1v2 / ( vector1Length * vector2Length ));
+    if ( debug )
+    {
+      console.log('returned degrees %d', radians_to_degrees(angle));
+
+    }
+    return radians_to_degrees(angle);
+  }
+
+
+  function test()
+  {
+    let succeeded      = true;
+    let relativePoints = [];
+    relativePoints.push([1, 0]);
+    relativePoints.push([0, 0]);
+    relativePoints.push([1, 1]);
+
+    relativePoints.push([1, 0]);
+    relativePoints.push([0, 0]);
+    relativePoints.push([0, 1]);
+
+    relativePoints.push([1, 0]);
+    relativePoints.push([0, 0]);
+    relativePoints.push([-1, 1]);
+
+    relativePoints.push([1, 0]);
+    relativePoints.push([0, 0]);
+    relativePoints.push([-1, -1]);
+
+
+    if ( isConcave(relativePoints[0], relativePoints[1], relativePoints[2]) === false )
+    {
+      console.log('Error with convex points returned false should be true, result: %s', JSON.stringify(isConcave(relativePoints[0], relativePoints[1], relativePoints[2])));
+      console.log(isConcave(relativePoints[0], relativePoints[1], relativePoints[2], true));
+      succeeded = false;
+    }
+    if ( isConcave(relativePoints[3], relativePoints[4], relativePoints[5]) === false )
+    {
+      console.log('Error with convex points returned false should be true');
+      console.log(isConcave(relativePoints[3], relativePoints[4], relativePoints[5], true));
+      succeeded = false;
+    }
+    if ( isConcave(relativePoints[6], relativePoints[7], relativePoints[8]) === false )
+    {
+      console.log('Error with convex points returned false should be true');
+      console.log(isConcave(relativePoints[6], relativePoints[7], relativePoints[8], true));
+      succeeded = false;
+    }
+    if ( isConcave(relativePoints[6], relativePoints[7], relativePoints[8]) === false )
+    {
+      console.log('Error with convex points returned false should be true');
+      console.log(isConcave(relativePoints[6], relativePoints[7], relativePoints[8], true));
+      succeeded = false;
+    }
+    if ( isConcave(relativePoints[9], relativePoints[10], relativePoints[11]) === true )
+    {
+      console.log('Error with convex points returned true should be false');
+      console.log(isConcave(relativePoints[9], relativePoints[10], relativePoints[11], true));
+      succeeded = false;
+    }
+
+
+    relativePoints = [];
+    relativePoints.push([0, 0]);
+    relativePoints.push([0, 10]);
+    relativePoints.push([10, 10]);
+    relativePoints.push([10, 0]);
+
+    let shrunkRelativePoints = shrinkShape(relativePoints, 1);
+    let precision            = 1e-10;
+
+    if (
+        !effectivelyEqual(shrunkRelativePoints[0][0], 0.70710678118, precision) || !effectivelyEqual(shrunkRelativePoints[0][1], 0.70710678118, precision) &&
+        !effectivelyEqual(shrunkRelativePoints[1][0], 0.70710678118, precision) || !effectivelyEqual(shrunkRelativePoints[1][1], 10 - 0.70710678118, precision) &&
+        !effectivelyEqual(shrunkRelativePoints[2][0], 10 - 0.70710678118, precision) || !effectivelyEqual(shrunkRelativePoints[2][1], 10 - 0.70710678118, precision) &&
+        !effectivelyEqual(shrunkRelativePoints[3][0], 10 - 0.70710678118, precision) || !effectivelyEqual(shrunkRelativePoints[3][1], 0.70710678118, precision) )
+    {
+      console.log('Failed to shrink points by the correct angle should be \n [[0.7071067811865475, 0.7071067811865475] [ 0.7071067811865475, 9.29289321882] [ 9.29289321882, 9.29289321882] [9.29289321882, 0.7071067811865475]] but got : \n %s', JSON.stringify(shrunkRelativePoints));
+      console.log('see debug below ####################################################################################');
+      shrinkShape(relativePoints, 1, true);
+      console.log('end of test debug ####################################################################################');
+      succeeded = false;
+
+
+    }
+    if ( succeeded )
+    {
+      alert('All tests passed');
+    } else
+    {
+      alert('Test failed check console log');
+    }
+
+    // console.log(pointsToStl(relativePoints, 50));
+    // console.log(pointsToStl(shrunkRelativePoints, 75));
+      /*
+       // This was part of test I was running but never formalised it, it created a star which was really useful for checking concave/ convex angles correctness. I may revisit this and create some test to pass/ fail it
+       relativePoints = [];
+       relativePoints.push([0, 6]);
+       relativePoints.push([2, 2]);
+       relativePoints.push([6, 0]);
+       relativePoints.push([2, -2]);
+       relativePoints.push([0, -6]);
+       relativePoints.push([-2, -2]);
+       relativePoints.push([-6, 0]);
+       relativePoints.push([-2, 2]);
+
+       shrunkRelativePoints = shrinkShape(relativePoints, 2, true);
+       console.log(pointsToSTLPerimeter(relativePoints, 50));
+       console.log(pointsToSTLPerimeter(shrunkRelativePoints, 75));*/
+  }
+
+  function effectivelyEqual(num1, num2, precision)
+  {
+    return Math.abs(num1 - num2) < precision;
+  }
+</script>
+
+
+</body>
+</html>
